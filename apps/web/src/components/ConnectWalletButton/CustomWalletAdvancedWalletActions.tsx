@@ -11,12 +11,90 @@ import QRCode from 'qrcode.react';
 const BASESCAN_URL = 'https://basescan.org';
 
 /**
+ * Clears all wallet-related localStorage entries.
+ * This ensures a clean disconnect even if the normal disconnect flow fails.
+ *
+ * Wagmi v2 uses these keys:
+ * - wagmi.store - main wagmi state
+ * - wagmi.recentConnectorId - recent connector
+ * - wagmi.connectedRdns - connected wallet RDNS
+ *
+ * WalletConnect v2 uses:
+ * - wc@2:* keys - WalletConnect sessions
+ * - walletconnect - legacy WalletConnect data
+ *
+ * RainbowKit uses:
+ * - rk-* keys - RainbowKit state
+ *
+ * Coinbase Wallet uses:
+ * - -walletlink:* keys - Coinbase Wallet/WalletLink data
+ */
+function clearWalletStorage() {
+  if (typeof window === 'undefined') return;
+
+  const keysToRemove: string[] = [];
+
+  // Collect all wallet-related localStorage keys
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key) {
+      // Wagmi storage keys
+      if (key.startsWith('wagmi')) {
+        keysToRemove.push(key);
+      }
+      // WalletConnect v2 keys
+      if (key.startsWith('wc@2:') || key === 'walletconnect') {
+        keysToRemove.push(key);
+      }
+      // RainbowKit keys
+      if (key.startsWith('rk-')) {
+        keysToRemove.push(key);
+      }
+      // Coinbase Wallet / WalletLink keys
+      if (key.startsWith('-walletlink:') || key.startsWith('walletlink')) {
+        keysToRemove.push(key);
+      }
+      // OnchainKit keys (if any)
+      if (key.startsWith('ock-') || key.startsWith('onchainkit')) {
+        keysToRemove.push(key);
+      }
+    }
+  }
+
+  // Remove all collected keys
+  keysToRemove.forEach((key) => {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      console.warn(`Failed to remove localStorage key: ${key}`, e);
+    }
+  });
+
+  // Also clear sessionStorage for WalletConnect
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const key = sessionStorage.key(i);
+      if (key && (key.startsWith('wc@2:') || key.startsWith('walletconnect'))) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to clear sessionStorage', e);
+  }
+}
+
+/**
  * Custom implementation of WalletAdvancedWalletActions that properly handles
  * the disconnect functionality using wagmi's useDisconnect hook.
  *
  * This component addresses an issue where the OnchainKit WalletAdvancedWalletActions
  * disconnect button may not work properly in certain states (e.g., when the user's
  * authentication session has expired but the wallet is still connected).
+ *
+ * The fix involves:
+ * 1. Clearing all wallet-related localStorage/sessionStorage BEFORE calling disconnect
+ * 2. Using wagmi's useDisconnect hook for the actual disconnect
+ * 3. Reloading the page only after storage is cleared to ensure clean state
  */
 export function CustomWalletAdvancedWalletActions() {
   const { isConnected, connector, address, chain } = useAccount();
@@ -26,13 +104,6 @@ export function CustomWalletAdvancedWalletActions() {
   const [copyText, setCopyText] = useState('Copy');
 
   const handleDisconnect = useCallback(() => {
-    if (!isConnected) {
-      // If we think we're not connected but the UI is showing,
-      // force a page reload to reset state
-      window.location.reload();
-      return;
-    }
-
     // Log the disconnect attempt for analytics
     logEvent(
       'wallet_disconnect_initiated',
@@ -45,6 +116,27 @@ export function CustomWalletAdvancedWalletActions() {
       },
       AnalyticsEventImportance.low,
     );
+
+    // CRITICAL: Clear all wallet storage FIRST
+    // This ensures that even if disconnect() fails or the page reloads,
+    // the persisted state won't bring us back to the same broken state
+    clearWalletStorage();
+
+    if (!isConnected) {
+      // If we think we're not connected but the UI is showing,
+      // storage is now cleared, so reload will show clean state
+      logEvent(
+        'wallet_disconnect_stale_state',
+        {
+          action: ActionType.change,
+          context: 'wallet_advanced',
+          address: address ?? 'unknown',
+        },
+        AnalyticsEventImportance.high,
+      );
+      window.location.reload();
+      return;
+    }
 
     try {
       disconnect(
@@ -61,8 +153,7 @@ export function CustomWalletAdvancedWalletActions() {
               },
               AnalyticsEventImportance.low,
             );
-            // Force a page reload to ensure all state is properly reset
-            // This addresses the edge case where wallet state gets out of sync
+            // Reload to ensure UI reflects disconnected state
             window.location.reload();
           },
           onError: (error) => {
@@ -76,7 +167,7 @@ export function CustomWalletAdvancedWalletActions() {
               },
               AnalyticsEventImportance.high,
             );
-            // Even if disconnect fails, try to reload to reset the UI state
+            // Storage is already cleared, reload to show clean state
             window.location.reload();
           },
         },
@@ -92,7 +183,7 @@ export function CustomWalletAdvancedWalletActions() {
         },
         AnalyticsEventImportance.high,
       );
-      // Fallback: reload the page to reset state
+      // Storage is already cleared, reload to show clean state
       window.location.reload();
     }
   }, [disconnect, connector, isConnected, address]);
