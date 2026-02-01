@@ -11,79 +11,6 @@ import QRCode from 'qrcode.react';
 const BASESCAN_URL = 'https://basescan.org';
 
 /**
- * Clears all wallet-related localStorage entries.
- * This ensures a clean disconnect even if the normal disconnect flow fails.
- *
- * Wagmi v2 uses these keys:
- * - wagmi.store - main wagmi state
- * - wagmi.recentConnectorId - recent connector
- * - wagmi.connectedRdns - connected wallet RDNS
- *
- * WalletConnect v2 uses:
- * - wc@2:* keys - WalletConnect sessions
- * - walletconnect - legacy WalletConnect data
- *
- * RainbowKit uses:
- * - rk-* keys - RainbowKit state
- *
- * Coinbase Wallet uses:
- * - -walletlink:* keys - Coinbase Wallet/WalletLink data
- */
-function clearWalletStorage() {
-  if (typeof window === 'undefined') return;
-
-  const keysToRemove: string[] = [];
-
-  // Collect all wallet-related localStorage keys
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key) {
-      // Wagmi storage keys
-      if (key.startsWith('wagmi')) {
-        keysToRemove.push(key);
-      }
-      // WalletConnect v2 keys
-      if (key.startsWith('wc@2:') || key === 'walletconnect') {
-        keysToRemove.push(key);
-      }
-      // RainbowKit keys
-      if (key.startsWith('rk-')) {
-        keysToRemove.push(key);
-      }
-      // Coinbase Wallet / WalletLink keys
-      if (key.startsWith('-walletlink:') || key.startsWith('walletlink')) {
-        keysToRemove.push(key);
-      }
-      // OnchainKit keys (if any)
-      if (key.startsWith('ock-') || key.startsWith('onchainkit')) {
-        keysToRemove.push(key);
-      }
-    }
-  }
-
-  // Remove all collected keys
-  keysToRemove.forEach((key) => {
-    try {
-      localStorage.removeItem(key);
-    } catch (e) {
-      console.warn(`Failed to remove localStorage key: ${key}`, e);
-    }
-  });
-
-  // Also clear sessionStorage for WalletConnect
-  try {
-    for (let i = sessionStorage.length - 1; i >= 0; i--) {
-      const key = sessionStorage.key(i);
-      if (key && (key.startsWith('wc@2:') || key.startsWith('walletconnect'))) {
-        sessionStorage.removeItem(key);
-      }
-    }
-  } catch (e) {
-    console.warn('Failed to clear sessionStorage', e);
-  }
-}
-
-/**
  * Custom implementation of WalletAdvancedWalletActions that properly handles
  * the disconnect functionality using wagmi's useDisconnect hook.
  *
@@ -91,19 +18,23 @@ function clearWalletStorage() {
  * disconnect button may not work properly in certain states (e.g., when the user's
  * authentication session has expired but the wallet is still connected).
  *
- * The fix involves:
- * 1. Clearing all wallet-related localStorage/sessionStorage BEFORE calling disconnect
- * 2. Using wagmi's useDisconnect hook for the actual disconnect
- * 3. Reloading the page only after storage is cleared to ensure clean state
+ * The key differences from OnchainKit's implementation:
+ * 1. Uses disconnectAsync for proper async handling
+ * 2. Iterates through ALL connectors to ensure complete disconnect
+ * 3. Proper error handling and logging
  */
 export function CustomWalletAdvancedWalletActions() {
   const { isConnected, connector, address, chain } = useAccount();
-  const { disconnect, isPending } = useDisconnect();
+  const { disconnect, disconnectAsync, connectors, isPending } = useDisconnect();
   const [, copy] = useCopyToClipboard();
   const [showQRCode, setShowQRCode] = useState(false);
   const [copyText, setCopyText] = useState('Copy');
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
 
-  const handleDisconnect = useCallback(() => {
+  const handleDisconnect = useCallback(async () => {
+    if (isDisconnecting) return;
+    setIsDisconnecting(true);
+
     // Log the disconnect attempt for analytics
     logEvent(
       'wallet_disconnect_initiated',
@@ -113,69 +44,37 @@ export function CustomWalletAdvancedWalletActions() {
         address: address ?? 'unknown',
         wallet_type: sanitizeEventString(connector?.name),
         wallet_connector_id: connector?.id,
+        connectors_count: connectors.length,
       },
       AnalyticsEventImportance.low,
     );
 
-    // CRITICAL: Clear all wallet storage FIRST
-    // This ensures that even if disconnect() fails or the page reloads,
-    // the persisted state won't bring us back to the same broken state
-    clearWalletStorage();
+    try {
+      // Disconnect all connectors properly using async/await
+      // This is the key fix - OnchainKit's version doesn't await these calls
+      for (const conn of connectors) {
+        try {
+          await disconnectAsync({ connector: conn });
+        } catch (connectorError) {
+          // Log but continue - one connector failing shouldn't prevent others
+          console.warn(`Failed to disconnect connector ${conn.name}:`, connectorError);
+        }
+      }
 
-    if (!isConnected) {
-      // If we think we're not connected but the UI is showing,
-      // storage is now cleared, so reload will show clean state
       logEvent(
-        'wallet_disconnect_stale_state',
+        'wallet_disconnected',
         {
           action: ActionType.change,
           context: 'wallet_advanced',
           address: address ?? 'unknown',
+          wallet_type: sanitizeEventString(connector?.name),
         },
-        AnalyticsEventImportance.high,
-      );
-      window.location.reload();
-      return;
-    }
-
-    try {
-      disconnect(
-        { connector },
-        {
-          onSuccess: () => {
-            logEvent(
-              'wallet_disconnected',
-              {
-                action: ActionType.change,
-                context: 'wallet_advanced',
-                address: address ?? 'unknown',
-                wallet_type: sanitizeEventString(connector?.name),
-              },
-              AnalyticsEventImportance.low,
-            );
-            // Reload to ensure UI reflects disconnected state
-            window.location.reload();
-          },
-          onError: (error) => {
-            console.error('Failed to disconnect wallet:', error);
-            logEvent(
-              'wallet_disconnect_error',
-              {
-                action: ActionType.error,
-                context: 'wallet_advanced',
-                error: error instanceof Error ? error.message : 'Unknown error',
-              },
-              AnalyticsEventImportance.high,
-            );
-            // Storage is already cleared, reload to show clean state
-            window.location.reload();
-          },
-        },
+        AnalyticsEventImportance.low,
       );
     } catch (error) {
       console.error('Error during disconnect:', error);
       logEvent(
-        'wallet_disconnect_exception',
+        'wallet_disconnect_error',
         {
           action: ActionType.error,
           context: 'wallet_advanced',
@@ -183,10 +82,10 @@ export function CustomWalletAdvancedWalletActions() {
         },
         AnalyticsEventImportance.high,
       );
-      // Storage is already cleared, reload to show clean state
-      window.location.reload();
+    } finally {
+      setIsDisconnecting(false);
     }
-  }, [disconnect, connector, isConnected, address]);
+  }, [disconnectAsync, connectors, connector, address, isDisconnecting]);
 
   const handleViewExplorer = useCallback(() => {
     if (!address) return;
@@ -260,7 +159,7 @@ export function CustomWalletAdvancedWalletActions() {
       <button
         type="button"
         onClick={handleDisconnect}
-        disabled={isPending}
+        disabled={isPending || isDisconnecting}
         data-testid="ockWalletAdvanced_DisconnectButton"
         className={classNames(
           actionButtonClasses,
@@ -268,8 +167,8 @@ export function CustomWalletAdvancedWalletActions() {
           'disabled:cursor-not-allowed disabled:opacity-50',
         )}
       >
-        {isPending ? <DisconnectSpinner /> : <DisconnectIcon />}
-        <span>{isPending ? 'Disconnecting' : 'Disconnect'}</span>
+        {isPending || isDisconnecting ? <DisconnectSpinner /> : <DisconnectIcon />}
+        <span>{isPending || isDisconnecting ? 'Disconnecting' : 'Disconnect'}</span>
       </button>
       {showQRCode && address && (
         <div
