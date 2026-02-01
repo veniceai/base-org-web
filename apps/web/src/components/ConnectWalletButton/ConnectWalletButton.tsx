@@ -3,6 +3,7 @@ import {
   ConnectWallet,
   Wallet,
   WalletAdvanced,
+  WalletAdvancedWalletActions,
   WalletAdvancedTransactionActions,
   WalletAdvancedTokenHoldings,
   ConnectWalletText,
@@ -22,7 +23,7 @@ import { Icon } from 'apps/web/src/components/Icon/Icon';
 import logEvent, { ActionType, AnalyticsEventImportance, identify } from 'base-ui/utils/logEvent';
 import sanitizeEventString from 'base-ui/utils/sanitizeEventString';
 import { CustomWalletAdvancedAddressDetails } from './CustomWalletAdvancedAddressDetails';
-import { CustomWalletAdvancedWalletActions } from './CustomWalletAdvancedWalletActions';
+import { CustomWalletDisconnectButton } from './CustomWalletDisconnectButton';
 
 export enum ConnectWalletButtonVariants {
   BaseOrg,
@@ -115,7 +116,15 @@ export function ConnectWalletButton({
         {showChainSwitcher && <ChainDropdown />}
       </ConnectWallet>
       <WalletAdvanced>
-        <CustomWalletAdvancedWalletActions />
+        {/* 
+          Use OnchainKit's WalletAdvancedWalletActions for QR, transactions, refresh
+          but hide their disconnect button (it has a bug where disconnect isn't awaited)
+          and use our CustomWalletDisconnectButton instead
+        */}
+        <div className="[&_[data-testid='ockWalletAdvanced_DisconnectButton']]:hidden">
+          <WalletAdvancedWalletActions />
+        </div>
+        <CustomWalletDisconnectButton />
         <CustomWalletAdvancedAddressDetails />
         <WalletAdvancedTransactionActions />
         <WalletAdvancedTokenHoldings />
