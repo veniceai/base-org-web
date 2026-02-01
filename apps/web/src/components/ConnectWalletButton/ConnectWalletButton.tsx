@@ -3,7 +3,6 @@ import {
   ConnectWallet,
   Wallet,
   WalletAdvanced,
-  WalletAdvancedWalletActions,
   WalletAdvancedTransactionActions,
   WalletAdvancedTokenHoldings,
   ConnectWalletText,
@@ -23,6 +22,7 @@ import { Icon } from 'apps/web/src/components/Icon/Icon';
 import logEvent, { ActionType, AnalyticsEventImportance, identify } from 'base-ui/utils/logEvent';
 import sanitizeEventString from 'base-ui/utils/sanitizeEventString';
 import { CustomWalletAdvancedAddressDetails } from './CustomWalletAdvancedAddressDetails';
+import { CustomWalletAdvancedWalletActions } from './CustomWalletAdvancedWalletActions';
 
 export enum ConnectWalletButtonVariants {
   BaseOrg,
@@ -115,7 +115,7 @@ export function ConnectWalletButton({
         {showChainSwitcher && <ChainDropdown />}
       </ConnectWallet>
       <WalletAdvanced>
-        <WalletAdvancedWalletActions />
+        <CustomWalletAdvancedWalletActions />
         <CustomWalletAdvancedAddressDetails />
         <WalletAdvancedTransactionActions />
         <WalletAdvancedTokenHoldings />

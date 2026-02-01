@@ -16,8 +16,8 @@ import {
   WalletAdvancedAddressDetails,
   WalletAdvancedTokenHoldings,
   WalletAdvancedTransactionActions,
-  WalletAdvancedWalletActions,
 } from '@coinbase/onchainkit/wallet';
+import { CustomWalletAdvancedWalletActions } from 'apps/web/src/components/ConnectWalletButton/CustomWalletAdvancedWalletActions';
 import { Name } from '@coinbase/onchainkit/identity';
 import Title from 'apps/web/src/components/base-org/typography/Title';
 import { TitleLevel } from 'apps/web/src/components/base-org/typography/Title/types';
@@ -87,7 +87,7 @@ export function LiveDemo({ components, title, hideDescription = false }: LiveDem
               <Name />
             </ConnectWallet>
             <WalletAdvanced>
-              <WalletAdvancedWalletActions />
+              <CustomWalletAdvancedWalletActions />
               <WalletAdvancedAddressDetails classNames={walletAdvancedAddressDetailsClasses} />
               <WalletAdvancedTransactionActions />
               <WalletAdvancedTokenHoldings />
